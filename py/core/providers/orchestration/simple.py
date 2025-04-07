@@ -15,15 +15,6 @@ class SimpleOrchestrationProvider(OrchestrationProvider):
     def get_worker(self, name: str, max_runs: int) -> Any:
         pass
 
-    def step(self, *args, **kwargs) -> Any:
-        pass
-
-    def workflow(self, *args, **kwargs) -> Any:
-        pass
-
-    def failure(self, *args, **kwargs) -> Any:
-        pass
-
     def register_workflows(
         self, workflow: Workflow, service: Any, messages: dict
     ) -> None:

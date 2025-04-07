@@ -6,9 +6,8 @@ import logging
 import math
 import time
 import uuid
-from typing import TYPE_CHECKING
 
-from hatchet_sdk import ConcurrencyLimitStrategy, Context
+from hatchet_sdk import ConcurrencyLimitStrategy, Context, Hatchet
 
 from core import GenerationConfig
 from core.base import OrchestrationProvider, R2RException
@@ -19,14 +18,13 @@ from core.base.abstractions import (
 
 from ...services import GraphService
 
-if TYPE_CHECKING:
-    from hatchet_sdk import Hatchet
-
 logger = logging.getLogger()
 
 
 def hatchet_graph_search_results_factory(
-    orchestration_provider: OrchestrationProvider, service: GraphService
+    hatchet: Hatchet,
+    orchestration_provider: OrchestrationProvider,
+    service: GraphService,
 ) -> dict[str, "Hatchet.Workflow"]:
     def convert_to_dict(input_data):
         """Converts input data back to a plain dictionary format, handling
@@ -81,29 +79,23 @@ def hatchet_graph_search_results_factory(
 
             if key == "document_id":
                 input_data[key] = (
-                    uuid.UUID(value)
-                    if not isinstance(value, uuid.UUID)
-                    else value
+                    value if isinstance(value, uuid.UUID) else uuid.UUID(value)
                 )
 
             if key == "collection_id":
                 input_data[key] = (
-                    uuid.UUID(value)
-                    if not isinstance(value, uuid.UUID)
-                    else value
+                    value if isinstance(value, uuid.UUID) else uuid.UUID(value)
                 )
 
             if key == "graph_id":
                 input_data[key] = (
-                    uuid.UUID(value)
-                    if not isinstance(value, uuid.UUID)
-                    else value
+                    value if isinstance(value, uuid.UUID) else uuid.UUID(value)
                 )
 
             if key in ["graph_creation_settings", "graph_enrichment_settings"]:
                 # Ensure we have a dict (if not already)
                 input_data[key] = (
-                    json.loads(value) if not isinstance(value, dict) else value
+                    value if isinstance(value, dict) else json.loads(value)
                 )
 
                 if "generation_config" in input_data[key]:
@@ -126,9 +118,9 @@ def hatchet_graph_search_results_factory(
 
         return input_data
 
-    @orchestration_provider.workflow(name="graph-extraction", timeout="360m")
+    @hatchet.workflow(name="graph-extraction", timeout="360m")
     class GraphExtractionWorkflow:
-        @orchestration_provider.concurrency(  # type: ignore
+        @hatchet.concurrency(
             max_runs=orchestration_provider.config.graph_search_results_concurrency_limit,  # type: ignore
             limit_strategy=ConcurrencyLimitStrategy.GROUP_ROUND_ROBIN,
         )
@@ -142,7 +134,7 @@ def hatchet_graph_search_results_factory(
         def __init__(self, graph_search_results_service: GraphService):
             self.graph_search_results_service = graph_search_results_service
 
-        @orchestration_provider.step(retries=1, timeout="360m")
+        @hatchet.step(retries=1, timeout="360m")
         async def graph_search_results_extraction(
             self, context: Context
         ) -> dict:
@@ -215,7 +207,7 @@ def hatchet_graph_search_results_factory(
                     "document_id": str(document_id),
                 }
 
-        @orchestration_provider.step(
+        @hatchet.step(
             retries=1,
             timeout="360m",
             parents=["graph_search_results_extraction"],
@@ -256,7 +248,7 @@ def hatchet_graph_search_results_factory(
                 "result": f"successfully ran graph_search_results entity description for document {document_id}"
             }
 
-        @orchestration_provider.failure()
+        @hatchet.on_failure_step()
         async def on_failure(self, context: Context) -> None:
             request = context.workflow_input().get("request", {})
             document_id = request.get("document_id")
@@ -281,12 +273,12 @@ def hatchet_graph_search_results_factory(
                     f"Failed to update document status for {document_id}: {e}"
                 )
 
-    @orchestration_provider.workflow(name="graph-clustering", timeout="360m")
+    @hatchet.workflow(name="graph-clustering", timeout="360m")
     class GraphClusteringWorkflow:
         def __init__(self, graph_search_results_service: GraphService):
             self.graph_search_results_service = graph_search_results_service
 
-        @orchestration_provider.step(retries=1, timeout="360m", parents=[])
+        @hatchet.step(retries=1, timeout="360m", parents=[])
         async def graph_search_results_clustering(
             self, context: Context
         ) -> dict:
@@ -338,7 +330,7 @@ def hatchet_graph_search_results_factory(
                 )
                 raise e
 
-        @orchestration_provider.step(
+        @hatchet.step(
             retries=1,
             timeout="360m",
             parents=["graph_search_results_clustering"],
@@ -424,7 +416,7 @@ def hatchet_graph_search_results_factory(
                 "result": f"Successfully completed enrichment with {len(results)} summary workflows"
             }
 
-        @orchestration_provider.failure()
+        @hatchet.on_failure_step()
         async def on_failure(self, context: Context) -> None:
             collection_id = context.workflow_input()["request"].get(
                 "collection_id", None
@@ -436,14 +428,12 @@ def hatchet_graph_search_results_factory(
                     status=GraphConstructionStatus.FAILED,
                 )
 
-    @orchestration_provider.workflow(
-        name="graph-community-summarization", timeout="360m"
-    )
+    @hatchet.workflow(name="graph-community-summarization", timeout="360m")
     class GraphCommunitySummarizerWorkflow:
         def __init__(self, graph_search_results_service: GraphService):
             self.graph_search_results_service = graph_search_results_service
 
-        @orchestration_provider.concurrency(  # type: ignore
+        @hatchet.concurrency(  # type: ignore
             max_runs=orchestration_provider.config.graph_search_results_concurrency_limit,  # type: ignore
             limit_strategy=ConcurrencyLimitStrategy.GROUP_ROUND_ROBIN,
         )
@@ -456,7 +446,7 @@ def hatchet_graph_search_results_factory(
             except Exception:
                 return str(uuid.uuid4())
 
-        @orchestration_provider.step(retries=1, timeout="360m")
+        @hatchet.step(retries=1, timeout="360m")
         async def graph_search_results_community_summary(
             self, context: Context
         ) -> dict:
@@ -489,14 +479,12 @@ def hatchet_graph_search_results_factory(
                 "result": f"successfully ran graph_search_results community summary for communities {input_data['offset']} to {input_data['offset'] + len(community_summary)}"
             }
 
-    @orchestration_provider.workflow(
-        name="graph-deduplication", timeout="360m"
-    )
+    @hatchet.workflow(name="graph-deduplication", timeout="360m")
     class GraphDeduplicationWorkflow:
         def __init__(self, graph_search_results_service: GraphService):
             self.graph_search_results_service = graph_search_results_service
 
-        @orchestration_provider.concurrency(  # type: ignore
+        @hatchet.concurrency(  # type: ignore
             max_runs=orchestration_provider.config.graph_search_results_concurrency_limit,  # type: ignore
             limit_strategy=ConcurrencyLimitStrategy.GROUP_ROUND_ROBIN,
         )
@@ -507,7 +495,7 @@ def hatchet_graph_search_results_factory(
             except Exception:
                 return str(uuid.uuid4())
 
-        @orchestration_provider.step(retries=1, timeout="360m")
+        @hatchet.step(retries=1, timeout="360m")
         async def deduplicate_document_entities(
             self, context: Context
         ) -> dict:

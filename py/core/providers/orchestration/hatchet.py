@@ -19,7 +19,7 @@ class HatchetOrchestrationProvider(OrchestrationProvider):
             ) from None
         root_logger = logging.getLogger()
 
-        self.orchestrator = Hatchet(
+        self.hatchet = Hatchet(
             config=ClientConfig(
                 logger=root_logger,
             ),
@@ -28,23 +28,14 @@ class HatchetOrchestrationProvider(OrchestrationProvider):
         self.config: OrchestrationConfig = config
         self.messages: dict[str, str] = {}
 
-    def workflow(self, *args, **kwargs) -> Callable:
-        return self.orchestrator.workflow(*args, **kwargs)
-
-    def step(self, *args, **kwargs) -> Callable:
-        return self.orchestrator.step(*args, **kwargs)
-
-    def failure(self, *args, **kwargs) -> Callable:
-        return self.orchestrator.on_failure_step(*args, **kwargs)
-
     def get_worker(self, name: str, max_runs: Optional[int] = None) -> Any:
         if not max_runs:
             max_runs = self.config.max_runs
-        self.worker = self.orchestrator.worker(name, max_runs)  # type: ignore
+        self.worker = self.hatchet.worker(name, max_runs)  # type: ignore
         return self.worker
 
     def concurrency(self, *args, **kwargs) -> Callable:
-        return self.orchestrator.concurrency(*args, **kwargs)
+        return self.hatchet.concurrency(*args, **kwargs)
 
     async def start_worker(self):
         if not self.worker:
@@ -62,7 +53,7 @@ class HatchetOrchestrationProvider(OrchestrationProvider):
         *args,
         **kwargs,
     ) -> Any:
-        task_id = self.orchestrator.admin.run_workflow(  # type: ignore
+        task_id = self.hatchet.admin.run_workflow(
             workflow_name,
             parameters,
             options=options,  # type: ignore
@@ -89,7 +80,11 @@ class HatchetOrchestrationProvider(OrchestrationProvider):
                 hatchet_ingestion_factory,
             )
 
-            workflows = hatchet_ingestion_factory(self, service)
+            workflows = hatchet_ingestion_factory(
+                hatchet=self.hatchet,
+                orchestration_provider=self,
+                service=service,
+            )
             if self.worker:
                 for workflow in workflows.values():
                     self.worker.register_workflow(workflow)
@@ -99,7 +94,11 @@ class HatchetOrchestrationProvider(OrchestrationProvider):
                 hatchet_graph_search_results_factory,
             )
 
-            workflows = hatchet_graph_search_results_factory(self, service)
+            workflows = hatchet_graph_search_results_factory(
+                hatchet=self.hatchet,
+                orchestration_provider=self,
+                service=service,
+            )
             if self.worker:
                 for workflow in workflows.values():
                     self.worker.register_workflow(workflow)

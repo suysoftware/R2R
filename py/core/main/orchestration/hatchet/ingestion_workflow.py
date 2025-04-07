@@ -2,12 +2,11 @@
 import asyncio
 import logging
 import uuid
-from typing import TYPE_CHECKING
 from uuid import UUID
 
 import tiktoken
 from fastapi import HTTPException
-from hatchet_sdk import ConcurrencyLimitStrategy, Context
+from hatchet_sdk import ConcurrencyLimitStrategy, Context, Hatchet
 from litellm import AuthenticationError
 
 from core.base import (
@@ -25,9 +24,6 @@ from core.utils import (
 
 from ...services import IngestionService, IngestionServiceAdapter
 
-if TYPE_CHECKING:
-    from hatchet_sdk import Hatchet
-
 logger = logging.getLogger()
 
 
@@ -43,9 +39,11 @@ def count_tokens_for_text(text: str, model: str = "gpt-4o") -> int:
 
 
 def hatchet_ingestion_factory(
-    orchestration_provider: OrchestrationProvider, service: IngestionService
+    hatchet: Hatchet,
+    orchestration_provider: OrchestrationProvider,
+    service: IngestionService,
 ) -> dict[str, "Hatchet.Workflow"]:
-    @orchestration_provider.workflow(
+    @hatchet.workflow(
         name="ingest-files",
         timeout="60m",
     )
@@ -53,7 +51,7 @@ def hatchet_ingestion_factory(
         def __init__(self, ingestion_service: IngestionService):
             self.ingestion_service = ingestion_service
 
-        @orchestration_provider.concurrency(  # type: ignore
+        @hatchet.concurrency(  # type: ignore
             max_runs=orchestration_provider.config.ingestion_concurrency_limit,  # type: ignore
             limit_strategy=ConcurrencyLimitStrategy.GROUP_ROUND_ROBIN,
         )
@@ -68,7 +66,7 @@ def hatchet_ingestion_factory(
             except Exception:
                 return str(uuid.uuid4())
 
-        @orchestration_provider.step(retries=0, timeout="60m")
+        @hatchet.step(retries=0, timeout="60m")
         async def parse(self, context: Context) -> dict:
             try:
                 logger.info("Initiating ingestion workflow, step: parse")
@@ -305,7 +303,7 @@ def hatchet_ingestion_factory(
                     detail=f"Error during ingestion: {str(e)}",
                 ) from e
 
-        @orchestration_provider.failure()
+        @hatchet.on_failure_step()
         async def on_failure(self, context: Context) -> None:
             request = context.workflow_input().get("request", {})
             document_id = request.get("document_id")
@@ -346,7 +344,7 @@ def hatchet_ingestion_factory(
                     f"Failed to update document status for {document_id}: {e}"
                 )
 
-    @orchestration_provider.workflow(
+    @hatchet.workflow(
         name="ingest-chunks",
         timeout="60m",
     )
@@ -354,7 +352,7 @@ def hatchet_ingestion_factory(
         def __init__(self, ingestion_service: IngestionService):
             self.ingestion_service = ingestion_service
 
-        @orchestration_provider.step(timeout="60m")
+        @hatchet.step(timeout="60m")
         async def ingest(self, context: Context) -> dict:
             input_data = context.workflow_input()["request"]
             parsed_data = IngestionServiceAdapter.parse_ingest_chunks_input(
@@ -397,7 +395,7 @@ def hatchet_ingestion_factory(
                 "document_info": document_info.to_dict(),
             }
 
-        @orchestration_provider.step(parents=["ingest"], timeout="60m")
+        @hatchet.step(parents=["ingest"], timeout="60m")
         async def embed(self, context: Context) -> dict:
             document_info_dict = context.step_output("ingest")["document_info"]
             document_info = DocumentResponse(**document_info_dict)
@@ -427,7 +425,7 @@ def hatchet_ingestion_factory(
                 "document_info": document_info.to_dict(),
             }
 
-        @orchestration_provider.step(parents=["embed"], timeout="60m")
+        @hatchet.step(parents=["embed"], timeout="60m")
         async def finalize(self, context: Context) -> dict:
             document_info_dict = context.step_output("embed")["document_info"]
             document_info = DocumentResponse(**document_info_dict)
@@ -523,7 +521,7 @@ def hatchet_ingestion_factory(
                 "document_info": document_info.to_dict(),
             }
 
-        @orchestration_provider.failure()
+        @hatchet.on_failure_step()
         async def on_failure(self, context: Context) -> None:
             request = context.workflow_input().get("request", {})
             document_id = request.get("document_id")
@@ -561,7 +559,7 @@ def hatchet_ingestion_factory(
                     f"Failed to update document status for {document_id}: {e}"
                 )
 
-    @orchestration_provider.workflow(
+    @hatchet.workflow(
         name="update-chunk",
         timeout="60m",
     )
@@ -569,7 +567,7 @@ def hatchet_ingestion_factory(
         def __init__(self, ingestion_service: IngestionService):
             self.ingestion_service = ingestion_service
 
-        @orchestration_provider.step(timeout="60m")
+        @hatchet.step(timeout="60m")
         async def update_chunk(self, context: Context) -> dict:
             try:
                 input_data = context.workflow_input()["request"]
@@ -609,19 +607,17 @@ def hatchet_ingestion_factory(
                     detail=f"Error during chunk update: {str(e)}",
                 ) from e
 
-        @orchestration_provider.failure()
+        @hatchet.on_failure_step()
         async def on_failure(self, context: Context) -> None:
             # Handle failure case if necessary
             pass
 
-    @orchestration_provider.workflow(
-        name="create-vector-index", timeout="360m"
-    )
+    @hatchet.workflow(name="create-vector-index", timeout="360m")
     class HatchetCreateVectorIndexWorkflow:
         def __init__(self, ingestion_service: IngestionService):
             self.ingestion_service = ingestion_service
 
-        @orchestration_provider.step(timeout="60m")
+        @hatchet.step(timeout="60m")
         async def create_vector_index(self, context: Context) -> dict:
             input_data = context.workflow_input()["request"]
             parsed_data = (
@@ -638,12 +634,12 @@ def hatchet_ingestion_factory(
                 "status": "Vector index creation queued successfully.",
             }
 
-    @orchestration_provider.workflow(name="delete-vector-index", timeout="30m")
+    @hatchet.workflow(name="delete-vector-index", timeout="30m")
     class HatchetDeleteVectorIndexWorkflow:
         def __init__(self, ingestion_service: IngestionService):
             self.ingestion_service = ingestion_service
 
-        @orchestration_provider.step(timeout="10m")
+        @hatchet.step(timeout="10m")
         async def delete_vector_index(self, context: Context) -> dict:
             input_data = context.workflow_input()["request"]
             parsed_data = (
