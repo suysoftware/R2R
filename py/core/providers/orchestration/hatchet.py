@@ -80,6 +80,10 @@ class HatchetOrchestrationProvider(OrchestrationProvider):
                 hatchet_ingestion_factory,
             )
 
+            logger.warning(
+                f"Hatchet is {self.hatchet} of type {type(self.hatchet)}"
+            )
+
             workflows = hatchet_ingestion_factory(
                 hatchet=self.hatchet,
                 orchestration_provider=self,

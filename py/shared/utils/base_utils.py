@@ -625,16 +625,6 @@ def num_tokens(text, model="gpt-4o"):
     return len(encoding.encode(text, disallowed_special=()))
 
 
-def count_tokens_for_text(text: str, model: str = "gpt-4o") -> int:
-    try:
-        encoding = tiktoken.encoding_for_model(model)
-    except KeyError:
-        # Fallback to a known encoding if model not recognized
-        encoding = tiktoken.get_encoding("cl100k_base")
-
-    return len(encoding.encode(text, disallowed_special=()))
-
-
 class CombinedMeta(AsyncSyncMeta, ABCMeta):
     pass
 
