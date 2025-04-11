@@ -101,40 +101,6 @@ class Citation(R2RSerializable):
         }
 
 
-# class Citation(R2RSerializable):
-#     """Represents a single citation reference in the RAG response.
-
-#     Combines both bracket metadata (start/end offsets, snippet range) and the
-#     mapped source fields (id, doc ID, chunk text, etc.).
-#     """
-
-#     # Bracket references
-#     id: str = Field(..., description="The ID of the citation object")
-#     object: str = Field(
-#         ...,
-#         description="The type of object, e.g. `citation`",
-#     )
-#     payload: (
-#         ChunkSearchResult
-#         | GraphSearchResult
-#         | WebPageSearchResult
-#         | DocumentResponse
-#         | None
-#     ) = Field(
-#         ..., description="The object payload and it's corresponding type"
-#     )
-
-#     class Config:
-#         extra = "ignore"  # This tells Pydantic to ignore extra fields
-#         json_schema_extra = {
-#             "example": {
-#                 "id": "cit.abcd123",
-#                 "object": "citation",
-#                 "payload": "ChunkSearchResult(...)",
-#             }
-#         }
-
-
 class RAGResponse(R2RSerializable):
     generated_answer: str = Field(
         ..., description="The generated completion from the RAG process"
